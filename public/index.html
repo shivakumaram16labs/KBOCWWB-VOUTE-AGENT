@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Google Form 24/7 Humanistic Automation Hub</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+  <div class="background-glows">
+    <div class="glow glow-1"></div>
+    <div class="glow glow-2"></div>
+    <div class="glow glow-3"></div>
+  </div>
+
+  <div class="app-container">
+    <!-- TOP NAVIGATION & BRANDING -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-icon">
+          <i class="fa-solid fa-server"></i>
+        </div>
+        <div>
+          <h1 class="brand-title">Google Form 24/7 Humanistic Automation</h1>
+          <p class="brand-subtitle">Natural Human Pacing (&lt; 20/min) • Live Minute Timers • SQLite Persistence • Pause &amp; Resume</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-outline-danger btn-sm" id="btnHeaderClear" title="Purge database and start fresh with a new sheet">
+          <i class="fa-solid fa-trash-can"></i> Clear &amp; New Sheet
+        </button>
+        <a href="/api/template/excel" class="btn btn-secondary btn-sm" id="btnDownloadExcel">
+          <i class="fa-solid fa-file-excel"></i> Template (.xlsx)
+        </a>
+        <a href="/api/template/csv" class="btn btn-secondary btn-sm" id="btnDownloadCsv">
+          <i class="fa-solid fa-file-csv"></i> Template (.csv)
+        </a>
+        <button class="btn btn-secondary btn-sm" id="btnOpenDocs">
+          <i class="fa-solid fa-circle-question"></i> System Info
+        </button>
+      </div>
+    </header>
+
+    <!-- LIVE DAEMON & MINUTE TIMER STATUS BANNER -->
+    <div class="daemon-banner">
+      <div class="daemon-info">
+        <span class="live-pulse-dot" id="daemonPulse"></span>
+        <div>
+          <strong id="daemonStatusText">Service Status: Idle</strong>
+          <p id="daemonPaceSubtext">Tab can be closed safely at any time — background daemon runs continuously on server.</p>
+        </div>
+      </div>
+      <div class="daemon-controls">
+        <button class="btn btn-success btn-sm" id="btnDaemonStart">
+          <i class="fa-solid fa-play"></i> Start Service
+        </button>
+        <button class="btn btn-warning btn-sm hidden" id="btnDaemonPause">
+          <i class="fa-solid fa-pause"></i> Pause Work
+        </button>
+        <button class="btn btn-primary btn-sm hidden" id="btnDaemonResume">
+          <i class="fa-solid fa-play"></i> Resume Work
+        </button>
+      </div>
+    </div>
+
+    <!-- LIVE 60-SECOND MINUTE CYCLE GAUGE -->
+    <div class="cycle-panel glass-card">
+      <div class="cycle-grid">
+        <div class="cycle-item">
+          <span class="cycle-label"><i class="fa-solid fa-repeat"></i> Active Cycle</span>
+          <span class="cycle-value" id="cycleNumberDisplay">Cycle #0</span>
+        </div>
+        <div class="cycle-item">
+          <span class="cycle-label"><i class="fa-solid fa-clock"></i> Next Cycle Starts In</span>
+          <div class="timer-badge-container">
+            <span class="timer-badge" id="secondsRemainingDisplay">--s</span>
+            <div class="timer-bar-bg"><div class="timer-bar-fill" id="timerBarFill" style="width: 0%;"></div></div>
+          </div>
+        </div>
+        <div class="cycle-item">
+          <span class="cycle-label"><i class="fa-solid fa-stopwatch"></i> Next Vote In</span>
+          <span class="cycle-value highlight-cyan" id="nextVoteInDisplay">--</span>
+        </div>
+        <div class="cycle-item">
+          <span class="cycle-label"><i class="fa-solid fa-chart-simple"></i> Minute Target (&lt; 20)</span>
+          <span class="cycle-value highlight-emerald" id="minuteTargetDisplay">0 / 0 votes</span>
+        </div>
+        <div class="cycle-item">
+          <span class="cycle-label"><i class="fa-solid fa-hourglass-end"></i> Estimated Time Left</span>
+          <span class="cycle-value" id="etcDisplay">--</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- METRICS SUMMARY CARDS -->
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-icon icon-total"><i class="fa-solid fa-database"></i></div>
+        <div class="metric-content">
+          <span class="metric-label">Total Indexed (10L+)</span>
+          <span class="metric-value" id="statTotal">0</span>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon icon-pending"><i class="fa-solid fa-hourglass-half"></i></div>
+        <div class="metric-content">
+          <span class="metric-label">Remaining Pending</span>
+          <span class="metric-value" id="statPending">0</span>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon icon-success"><i class="fa-solid fa-circle-check"></i></div>
+        <div class="metric-content">
+          <span class="metric-label">Votes Confirmed</span>
+          <span class="metric-value" id="statSuccess">0</span>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon icon-failed"><i class="fa-solid fa-triangle-exclamation"></i></div>
+        <div class="metric-content">
+          <span class="metric-label">Failed / Retried</span>
+          <span class="metric-value" id="statFailed">0</span>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon icon-status"><i class="fa-solid fa-gauge"></i></div>
+        <div class="metric-content">
+          <span class="metric-label">Overall Progress</span>
+          <span class="metric-value" id="progressPercentSmall">0.0%</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- PROGRESS BAR -->
+    <div class="progress-section">
+      <div class="progress-header">
+        <span class="progress-title">Overall Job Progress</span>
+        <span class="progress-percentage" id="progressPercent">0.0%</span>
+      </div>
+      <div class="progress-bar-container">
+        <div class="progress-bar-fill" id="progressBarFill" style="width: 0%;"></div>
+      </div>
+    </div>
+
+    <!-- MAIN TWO COLUMN WORKSPACE -->
+    <main class="main-layout">
+      <!-- LEFT COLUMN: CONTROLS & SETTINGS -->
+      <div class="left-panel">
+        
+        <!-- CARD: FILE UPLOADER (STREAMING 10L ROWS) -->
+        <div class="glass-card">
+          <div class="card-header">
+            <h3><i class="fa-solid fa-cloud-arrow-up"></i> 1. Upload Dataset (Up to 10 Lakhs)</h3>
+            <button class="btn btn-sm btn-outline-danger hidden" id="btnClearSheetBtn" title="Purge database">
+              <i class="fa-solid fa-trash-can"></i> Purge
+            </button>
+          </div>
+          <div class="card-body">
+            <div class="dropzone" id="dropZone">
+              <input type="file" id="fileInput" accept=".xlsx, .xls, .csv" style="display: none;">
+              <i class="fa-solid fa-file-csv dropzone-icon"></i>
+              <h4>Drag &amp; Drop CSV or Excel (10L Rows)</h4>
+              <p>Streams directly into persistent SQLite database</p>
+              <button class="btn btn-primary btn-sm" id="btnBrowseFile" style="margin-top: 10px;">
+                <i class="fa-solid fa-folder-open"></i> Select File
+              </button>
+            </div>
+            <div id="fileMeta" class="file-meta hidden">
+              <div class="file-info">
+                <i class="fa-solid fa-database" style="color: var(--accent-primary);"></i>
+                <span id="fileNameDisplay" style="font-weight: 600;">dataset.csv</span>
+                <span class="badge" id="rowCountDisplay">0 records</span>
+              </div>
+              <button class="btn btn-sm btn-outline-danger" id="btnClearFile" title="Purge data and upload new">
+                <i class="fa-solid fa-trash-can"></i> Reset
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD: HUMANISTIC PACING CONTROLS (< 20 / MIN) -->
+        <div class="glass-card">
+          <div class="card-header">
+            <h3><i class="fa-solid fa-user-clock"></i> 2. Natural Pacing (Strictly &lt; 20 / min)</h3>
+          </div>
+          <div class="card-body">
+            <p class="field-hint" style="margin-bottom: 12px;">
+              Every minute, the daemon randomly selects a count &lt; 20 (e.g. 8 to 16) and distributes each vote naturally with random second pauses.
+            </p>
+
+            <div class="form-row-2">
+              <div class="form-group">
+                <label for="minPerMinute">Min Votes / Min</label>
+                <input type="number" id="minPerMinute" class="form-input" value="8" min="1" max="18">
+              </div>
+              <div class="form-group">
+                <label for="maxPerMinute">Max Votes / Min (&lt; 20)</label>
+                <input type="number" id="maxPerMinute" class="form-input" value="16" min="2" max="19">
+              </div>
+            </div>
+
+            <!-- Optional Night Pause -->
+            <div class="form-group" style="margin-top: 10px;">
+              <div class="toggle-wrapper">
+                <label class="switch">
+                  <input type="checkbox" id="nightPauseToggle">
+                  <span class="slider round"></span>
+                </label>
+                <div>
+                  <strong>Auto Night Pause (11 PM – 7 AM)</strong>
+                  <p class="field-hint">Automatically pauses work at night and resumes automatically in morning</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD: GOOGLE FORM TARGET -->
+        <div class="glass-card">
+          <div class="card-header">
+            <h3><i class="fa-solid fa-link"></i> 3. Form Target URL</h3>
+          </div>
+          <div class="card-body">
+            <div class="form-group">
+              <input type="text" id="formUrlInput" class="form-input" 
+                value="https://docs.google.com/forms/u/0/d/e/1FAIpQLScXCqBHNMtSaXLzid7I4PftgY31PidN6s7hO9hI56zdfB8-Wg/formResponse?embedded=true"
+                placeholder="https://docs.google.com/forms/d/e/.../formResponse">
+            </div>
+
+            <details class="cookie-collapsible">
+              <summary><i class="fa-solid fa-key"></i> Google Auth Cookies (Optional)</summary>
+              <div class="cookie-body">
+                <p class="field-hint">Only needed if the form enforces login or "Limit to 1 response". Public voting forms DO NOT require cookies.</p>
+                <textarea id="cookiesInput" class="form-input" rows="2" placeholder="__Secure-3PSID=...; __Secure-OSID=...; NID=..."></textarea>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <!-- CARD: FIELD MAPPING -->
+        <div class="glass-card">
+          <div class="card-header">
+            <h3><i class="fa-solid fa-diagram-project"></i> 4. Column Mapping</h3>
+          </div>
+          <div class="card-body">
+            <div id="mappingList" class="mapping-list">
+              <div class="empty-hint">Upload a dataset to review parameter mappings</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ACTION BAR -->
+        <div class="action-card">
+          <button class="btn btn-warning" id="btnTestSingle" title="Submits row #1 to verify connection">
+            <i class="fa-solid fa-vial"></i> Test 1st Row
+          </button>
+          <button class="btn btn-secondary" id="btnExportResults" title="Export completed results">
+            <i class="fa-solid fa-download"></i> Export Results (.csv)
+          </button>
+        </div>
+
+      </div>
+
+      <!-- RIGHT COLUMN: LIVE MONITORING & PAGINATED DATA -->
+      <div class="right-panel">
+        
+        <!-- TABS FOR LIVE MONITORING -->
+        <div class="tab-container glass-card">
+          <div class="tab-nav">
+            <button class="tab-btn active" data-tab="tab-logs">
+              <i class="fa-solid fa-terminal"></i> 24/7 Live Daemon Console
+            </button>
+            <button class="tab-btn" data-tab="tab-table">
+              <i class="fa-solid fa-table"></i> Database Explorer (<span id="tableCountBadge">0</span>)
+            </button>
+          </div>
+
+          <!-- TAB 1: LIVE LOGS -->
+          <div class="tab-content active" id="tab-logs">
+            <div class="terminal-toolbar">
+              <div class="terminal-dots">
+                <span class="dot red"></span>
+                <span class="dot yellow"></span>
+                <span class="dot green"></span>
+              </div>
+              <span class="terminal-title">humanistic_daemon.log</span>
+              <button class="btn-icon" id="btnClearLogs" title="Clear console"><i class="fa-solid fa-eraser"></i></button>
+            </div>
+            <div class="terminal-window" id="terminalLogs">
+              <div class="log-entry log-info">
+                <span class="log-time">[Daemon]</span>
+                <span class="log-text">24/7 Background engine initialized with SQLite persistence.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- TAB 2: PAGINATED DATABASE TABLE -->
+          <div class="tab-content" id="tab-table">
+            <div class="table-toolbar">
+              <div class="search-box">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input type="text" id="tableSearch" placeholder="Search across 10L records by name, email, phone...">
+              </div>
+              <div class="filter-group">
+                <select id="statusFilter" class="form-select">
+                  <option value="ALL">All Statuses</option>
+                  <option value="PENDING">Pending</option>
+                  <option value="IN_PROGRESS">In Progress</option>
+                  <option value="SUCCESS">Success</option>
+                  <option value="FAILED">Failed</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="table-scroll-wrapper">
+              <table class="data-table" id="dataTable">
+                <thead>
+                  <tr id="tableHeaderRow">
+                    <th># ID</th>
+                    <th>Status</th>
+                    <th>First Name</th>
+                    <th>Last Name</th>
+                    <th>Email</th>
+                    <th>Phone</th>
+                    <th>Designation</th>
+                    <th>City</th>
+                    <th>State</th>
+                    <th>Submission Message</th>
+                  </tr>
+                </thead>
+                <tbody id="tableBody">
+                  <tr class="placeholder-row">
+                    <td colspan="10" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                      <i class="fa-solid fa-database" style="font-size: 2rem; margin-bottom: 10px; display: block;"></i>
+                      No records in database. Upload a CSV or Excel file to begin.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            
+            <div class="table-footer">
+              <span id="tablePaginationInfo">Showing page 1 of 1</span>
+              <div class="pagination-buttons">
+                <button class="btn btn-secondary btn-sm" id="btnPrevPage"><i class="fa-solid fa-chevron-left"></i> Prev</button>
+                <span id="pageNumberDisplay" style="font-size: 0.8rem; font-weight: 600;">1</span>
+                <button class="btn btn-secondary btn-sm" id="btnNextPage">Next <i class="fa-solid fa-chevron-right"></i></button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- GUIDE MODAL -->
+  <div class="modal-overlay hidden" id="docsModal">
+    <div class="modal-content glass-card">
+      <div class="modal-header">
+        <h2><i class="fa-solid fa-shield-halved"></i> 24/7 Humanistic Daemon Architecture</h2>
+        <button class="btn-icon" id="btnCloseDocs"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <h3>1. True Server Daemon (Tab Close Safe)</h3>
+        <p>The background loop runs permanently on the Node.js server inside <code>votes.db</code>. You can start the job, close your laptop or browser tab, and it continues processing 24/7 until completed.</p>
+
+        <h3>2. Strictly &lt; 20 Votes / Minute</h3>
+        <p>In each minute window, the server calculates a random human target (e.g. 8 to 16 votes) and spreads each request across the 60-second window with natural random second delays.</p>
+
+        <h3>3. Instant Pause &amp; Resume</h3>
+        <p>Click <strong>Pause Work</strong> at night or whenever needed. When you click <strong>Resume Work</strong>, the engine picks up exactly from row N+1 without skipping or repeating any record.</p>
+
+        <h3>4. Scaled for 10 Lakhs (1,000,000) Records</h3>
+        <p>Uses disk-persisted SQLite WAL mode. 10 Lakh rows use less than 50MB RAM and can be uploaded, paused, and resumed smoothly without crashing.</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
