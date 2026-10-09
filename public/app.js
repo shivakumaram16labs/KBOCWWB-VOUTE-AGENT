@@ -1,3 +1,15 @@
+// Dynamic Base Path Resolver for subpaths (e.g. /kbocvoteagent/ or /)
+function getApiUrl(endpoint) {
+  let base = window.location.pathname;
+  if (base.endsWith('.html') || base.endsWith('.htm')) {
+    base = base.substring(0, base.lastIndexOf('/') + 1);
+  } else if (!base.endsWith('/')) {
+    base += '/';
+  }
+  const cleanEndpoint = endpoint.replace(/^\//, '');
+  return `${base}${cleanEndpoint}`;
+}
+
 // State
 let appState = {
   status: 'IDLE',
@@ -36,6 +48,9 @@ const etcDisplay = document.getElementById('etcDisplay');
 const btnHeaderClear = document.getElementById('btnHeaderClear');
 const btnClearFile = document.getElementById('btnClearFile');
 const btnClearSheetBtn = document.getElementById('btnClearSheetBtn');
+
+const btnDownloadExcel = document.getElementById('btnDownloadExcel');
+const btnDownloadCsv = document.getElementById('btnDownloadCsv');
 
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
@@ -80,6 +95,10 @@ const btnOpenDocs = document.getElementById('btnOpenDocs');
 const btnCloseDocs = document.getElementById('btnCloseDocs');
 const docsModal = document.getElementById('docsModal');
 
+// Dynamically set template link hrefs
+if (btnDownloadExcel) btnDownloadExcel.href = getApiUrl('api/template/excel');
+if (btnDownloadCsv) btnDownloadCsv.href = getApiUrl('api/template/csv');
+
 // Tab Switching
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -102,7 +121,7 @@ btnClearLogs.addEventListener('click', () => {
   terminalLogs.innerHTML = '';
 });
 
-// File Upload
+// File Upload Handlers
 btnBrowseFile.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('click', (e) => {
   if (e.target !== btnBrowseFile) fileInput.click();
@@ -129,44 +148,91 @@ fileInput.addEventListener('change', (e) => {
   }
 });
 
-async function handleFileUpload(file) {
+// Upload Function with Subpath Support & Progress Tracking
+function handleFileUpload(file) {
   const formData = new FormData();
   formData.append('file', file);
 
-  addLogToUI(`Streaming and indexing "${file.name}" into persistent SQLite database...`, 'info');
+  const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+  const targetUploadUrl = getApiUrl('api/upload');
 
-  try {
-    const res = await fetch('/api/upload', {
-      method: 'POST',
-      body: formData
-    });
+  addLogToUI(`Target URL: ${targetUploadUrl}`, 'info');
+  addLogToUI(`Starting upload of "${file.name}" (${fileSizeMB} MB)...`, 'info');
 
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to upload file');
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', targetUploadUrl, true);
 
-    appState.mapping = data.mapping;
+  // Upload Progress
+  xhr.upload.onprogress = (e) => {
+    if (e.lengthComputable) {
+      const pct = Math.round((e.loaded / e.total) * 100);
+      const loadedMB = (e.loaded / (1024 * 1024)).toFixed(1);
+      const totalMB = (e.total / (1024 * 1024)).toFixed(1);
+      btnBrowseFile.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Uploading ${pct}% (${loadedMB}/${totalMB} MB)...`;
+    }
+  };
 
-    fileNameDisplay.textContent = data.fileName;
-    rowCountDisplay.textContent = `${data.totalRows.toLocaleString()} records`;
-    fileMeta.classList.remove('hidden');
-    dropZone.classList.add('hidden');
-    btnClearSheetBtn.classList.remove('hidden');
+  xhr.onload = async () => {
+    btnBrowseFile.innerHTML = `<i class="fa-solid fa-folder-open"></i> Select File`;
+    
+    let responseData = null;
+    try {
+      responseData = JSON.parse(xhr.responseText);
+    } catch (e) {
+      // Non-JSON response
+    }
 
-    renderMapping();
-    await syncServerState();
-    await fetchRecordsPage(1);
+    if (xhr.status >= 200 && xhr.status < 300 && responseData && responseData.success) {
+      appState.mapping = responseData.mapping;
+      fileNameDisplay.textContent = responseData.fileName;
+      rowCountDisplay.textContent = `${responseData.totalRows.toLocaleString()} records`;
+      fileMeta.classList.remove('hidden');
+      dropZone.classList.add('hidden');
+      btnClearSheetBtn.classList.remove('hidden');
 
-    addLogToUI(`Indexed ${data.totalRows.toLocaleString()} records into database. Ready to start background service.`, 'success');
-  } catch (err) {
-    alert(`Upload Error: ${err.message}`);
-    addLogToUI(`Upload Error: ${err.message}`, 'error');
-  }
+      renderMapping();
+      await syncServerState();
+      await fetchRecordsPage(1);
+
+      addLogToUI(`✅ Successfully indexed ${responseData.totalRows.toLocaleString()} records from "${responseData.fileName}". Ready to start.`, 'success');
+    } else {
+      let errorMessage = 'Upload failed.';
+      if (responseData && responseData.error) {
+        errorMessage = responseData.error;
+      } else if (xhr.status === 404) {
+        errorMessage = `HTTP 404 (Not Found) at ${targetUploadUrl}. Check if your Nginx proxy_pass is routing ${window.location.pathname} to the Node server.`;
+      } else if (xhr.status === 413) {
+        errorMessage = `HTTP 413 (Request Entity Too Large): The server / Nginx reverse proxy rejected the ${fileSizeMB}MB file. Fix: Add "client_max_body_size 500M;" in Nginx config.`;
+      } else if (xhr.status === 502) {
+        errorMessage = `HTTP 502 (Bad Gateway): The Node process crashed or restarted during upload.`;
+      } else if (xhr.status === 504) {
+        errorMessage = `HTTP 504 (Gateway Timeout): Upload took longer than the proxy timeout limit.`;
+      } else if (xhr.status === 0) {
+        errorMessage = `Network Connection Dropped: Could not reach server at ${targetUploadUrl}.`;
+      } else {
+        errorMessage = `HTTP ${xhr.status} Error: ${xhr.responseText.substring(0, 300)}`;
+      }
+
+      console.error('Upload Error:', xhr.status, xhr.responseText);
+      addLogToUI(`❌ ${errorMessage}`, 'error');
+      alert(`Upload Error:\n\n${errorMessage}`);
+    }
+  };
+
+  xhr.onerror = () => {
+    btnBrowseFile.innerHTML = `<i class="fa-solid fa-folder-open"></i> Select File`;
+    const errMsg = `Network error: Could not reach upload endpoint at ${targetUploadUrl}.`;
+    addLogToUI(`❌ ${errMsg}`, 'error');
+    alert(errMsg);
+  };
+
+  xhr.send(formData);
 }
 
 // Clear Database & Reset
 async function performClearAll() {
   try {
-    await fetch('/api/clear-all', { method: 'POST' });
+    await fetch(getApiUrl('api/clear-all'), { method: 'POST' });
     fileInput.value = '';
     fileMeta.classList.add('hidden');
     dropZone.classList.remove('hidden');
@@ -207,7 +273,7 @@ btnDaemonStart.addEventListener('click', async () => {
   };
 
   try {
-    const res = await fetch('/api/start', {
+    const res = await fetch(getApiUrl('api/start'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ config, mapping: appState.mapping })
@@ -224,7 +290,7 @@ btnDaemonStart.addEventListener('click', async () => {
 
 btnDaemonPause.addEventListener('click', async () => {
   try {
-    await fetch('/api/pause', { method: 'POST' });
+    await fetch(getApiUrl('api/pause'), { method: 'POST' });
     appState.status = 'PAUSED';
     updateDaemonControls();
     addLogToUI('⏸️ Service paused by user.', 'warning');
@@ -235,7 +301,7 @@ btnDaemonPause.addEventListener('click', async () => {
 
 btnDaemonResume.addEventListener('click', async () => {
   try {
-    await fetch('/api/resume', { method: 'POST' });
+    await fetch(getApiUrl('api/resume'), { method: 'POST' });
     appState.status = 'RUNNING';
     updateDaemonControls();
     addLogToUI('▶️ Service resumed. Continuing from exact next record.', 'success');
@@ -254,7 +320,7 @@ btnTestSingle.addEventListener('click', async () => {
   btnTestSingle.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Testing Row #1...`;
 
   try {
-    const res = await fetch('/api/test-single', { method: 'POST' });
+    const res = await fetch(getApiUrl('api/test-single'), { method: 'POST' });
     const data = await res.json();
     if (data.success) {
       alert(`✅ Success: ${data.message}`);
@@ -270,7 +336,7 @@ btnTestSingle.addEventListener('click', async () => {
 });
 
 btnExportResults.addEventListener('click', () => {
-  window.location.href = '/api/export?format=csv';
+  window.location.href = getApiUrl('api/export?format=csv');
 });
 
 // Render Mapping Inputs
@@ -318,7 +384,7 @@ async function fetchRecordsPage(page = 1) {
       search: appState.searchTerm
     });
 
-    const res = await fetch(`/api/records?${params.toString()}`);
+    const res = await fetch(getApiUrl(`api/records?${params.toString()}`));
     const data = await res.json();
 
     appState.totalPages = data.totalPages || 1;
@@ -507,10 +573,10 @@ function addLogToUI(message, type = 'info', timestamp = null) {
   terminalLogs.scrollTop = terminalLogs.scrollHeight;
 }
 
-// Sync full state from server (even on tab reopen!)
+// Sync full state from server
 async function syncServerState() {
   try {
-    const res = await fetch('/api/status');
+    const res = await fetch(getApiUrl('api/status'));
     const data = await res.json();
     appState.status = data.status;
     appState.stats = data.stats;
@@ -537,9 +603,9 @@ async function syncServerState() {
   }
 }
 
-// Server-Sent Events (SSE) Listener for Real-Time UI Updates
+// Server-Sent Events (SSE) Listener
 function initSSE() {
-  const eventSource = new EventSource('/api/events');
+  const eventSource = new EventSource(getApiUrl('api/events'));
 
   eventSource.addEventListener('log', (e) => {
     const logItem = JSON.parse(e.data);

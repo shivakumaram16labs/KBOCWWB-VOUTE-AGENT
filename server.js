@@ -8,16 +8,15 @@ const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
 const csvParser = require('csv-parser');
-const { Readable } = require('stream');
 
 const app = express();
 const PORT = process.env.PORT || 3030;
 
-// Ensure data directory exists
+// Ensure persistent directories exist
 const DATA_DIR = path.join(__dirname, 'data');
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 // Initialize SQLite Persistent Database
 const dbPath = path.join(DATA_DIR, 'votes.db');
@@ -138,13 +137,38 @@ function setEngineState(state) {
   stmtSetConfig.run('engine_status', state);
 }
 
-// Express App
+// Express App Configuration
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+
+// Subpath & Reverse Proxy Prefix Normalizer (Supports /kbocvoteagent or direct root /)
+app.use((req, res, next) => {
+  if (req.url.startsWith('/kbocvoteagent/')) {
+    req.url = req.url.substring('/kbocvoteagent'.length);
+  } else if (req.url === '/kbocvoteagent') {
+    return res.redirect(301, '/kbocvoteagent/');
+  }
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
-const upload = multer({ limits: { fileSize: 500 * 1024 * 1024 } });
+// Disk Storage Multer for Large 10L Files (avoids RAM Exhaustion on Linux servers)
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, UPLOADS_DIR);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'upload-' + uniqueSuffix + '-' + file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_'));
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 1024 * 1024 * 1024 } // Up to 1GB file size
+});
 
 // Server-Sent Events clients
 let sseClients = [];
@@ -233,7 +257,6 @@ async function submitGoogleFormRow(row, config, mapping) {
   for (const [colName, entryId] of Object.entries(mapping)) {
     if (!entryId || !entryId.startsWith('entry.')) continue;
     
-    // Case-insensitive, whitespace-trimmed field value lookup
     let val = row[colName];
     if (val === undefined || val === null || val === '') {
       const lowerCol = colName.toLowerCase().trim();
@@ -338,7 +361,6 @@ let liveCycleState = {
   currentStatus: 'IDLE'
 };
 
-// Background heartbeat to broadcast live countdown every 1 second
 setInterval(() => {
   const engineState = getEngineState();
   liveCycleState.currentStatus = engineState;
@@ -380,7 +402,7 @@ async function backgroundDaemonLoop() {
     const config = getStoredConfig();
     const mapping = getStoredMapping();
 
-    // Check optional night auto-pause
+    // Night pause
     if (config.nightPauseEnabled) {
       const currentHour = new Date().getHours();
       const isNight = (config.nightPauseStart > config.nightPauseEnd)
@@ -394,7 +416,7 @@ async function backgroundDaemonLoop() {
       }
     }
 
-    // 1. Calculate humanistic count for this 1-minute window strictly < 20
+    // Rate strictly < 20
     const minCount = Math.max(1, Math.min(18, parseInt(config.minPerMinute) || 8));
     const maxCount = Math.max(minCount, Math.min(19, parseInt(config.maxPerMinute) || 16));
     const targetThisMinute = Math.floor(Math.random() * (maxCount - minCount + 1)) + minCount;
@@ -418,17 +440,14 @@ async function backgroundDaemonLoop() {
     addLog(`⏱️ [Cycle #${cycleNumber}] Starting 60s window: Target = ${targetThisMinute} votes (< 20/min naturally spread across 60 seconds)`, 'info');
     broadcast('minute_start', liveCycleState);
 
-    // 2. Schedule natural random second intervals across 60 seconds
     const baseIntervalMs = Math.floor(minuteDurationMs / targetThisMinute);
 
     for (let k = 0; k < targetThisMinute; k++) {
-      // Check if paused or stopped in between seconds
       if (getEngineState() !== 'RUNNING') {
         addLog(`⏸️ Cycle #${cycleNumber} paused by user. Progress saved safely on disk.`, 'warning');
         break;
       }
 
-      // Fetch next pending record from SQLite
       const rowRecord = stmtGetNextPending.get();
       if (!rowRecord) {
         setEngineState('COMPLETED');
@@ -441,7 +460,6 @@ async function backgroundDaemonLoop() {
       let rowData = {};
       try { rowData = JSON.parse(rowRecord.raw_json); } catch (e) {}
 
-      // Mark IN_PROGRESS
       db.prepare(`UPDATE records SET status = 'IN_PROGRESS' WHERE id = ?`).run(rowId);
       broadcast('row_update', { id: rowId, status: 'IN_PROGRESS', data: rowData });
 
@@ -450,7 +468,6 @@ async function backgroundDaemonLoop() {
 
       addLog(`[C#${cycleNumber} | Vote ${k + 1}/${targetThisMinute}] Submitting #${rowId}: ${name} (${email})...`, 'info');
 
-      // Submit
       let result = null;
       let retries = 0;
       while (retries <= config.maxRetries) {
@@ -493,7 +510,6 @@ async function backgroundDaemonLoop() {
       });
       broadcast('stats_update', stmtGetStats.get());
 
-      // Humanistic interval between votes
       if (k < targetThisMinute - 1 && getEngineState() === 'RUNNING') {
         const jitterMs = Math.floor(Math.random() * 1500) - 750;
         const delayMs = Math.max(1800, baseIntervalMs + jitterMs);
@@ -502,7 +518,6 @@ async function backgroundDaemonLoop() {
       }
     }
 
-    // If minute ended before 60 seconds, sleep remaining ms until next cycle starts
     const elapsed = Date.now() - liveCycleState.minuteStart;
     if (elapsed < minuteDurationMs && getEngineState() === 'RUNNING') {
       const waitRemainingMs = minuteDurationMs - elapsed;
@@ -528,19 +543,23 @@ app.get('/api/template/csv', (req, res) => {
   res.download(file, 'google_form_voting_template.csv');
 });
 
-// 2. Stream Upload
+// 2. High-Performance Disk Streaming Upload (Linux PM2 Optimized)
 app.post('/api/upload', upload.single('file'), async (req, res) => {
+  let uploadedFilePath = null;
+
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded.' });
+      return res.status(400).json({ error: 'No file received by server. Check server upload permissions or Nginx client_max_body_size.' });
     }
 
+    uploadedFilePath = req.file.path;
     const originalName = req.file.originalname.toLowerCase();
+    const fileSizeMB = (req.file.size / (1024 * 1024)).toFixed(2);
     let totalCount = 0;
     let columns = [];
     let autoMapping = {};
 
-    addLog(`Streaming and indexing "${req.file.originalname}" into persistent database...`, 'info');
+    addLog(`Streaming "${req.file.originalname}" (${fileSizeMB} MB) into persistent database...`, 'info');
 
     const insertMany = db.transaction((rows) => {
       for (const r of rows) {
@@ -548,9 +567,11 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       }
     });
 
-    if (originalName.endsWith('.csv')) {
+    if (originalName.endsWith('.csv') || originalName.endsWith('.txt')) {
       const rowsBatch = [];
-      const stream = Readable.from(req.file.buffer).pipe(csvParser());
+      const stream = fs.createReadStream(uploadedFilePath).pipe(csvParser({
+        mapHeaders: ({ header }) => header.replace(/^\uFEFF/, '').trim() // Strip UTF-8 BOM
+      }));
 
       for await (const chunk of stream) {
         if (columns.length === 0) {
@@ -562,6 +583,9 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         if (rowsBatch.length >= 5000) {
           insertMany(rowsBatch);
           rowsBatch.length = 0;
+          if (totalCount % 50000 === 0) {
+            addLog(`Indexed ${totalCount.toLocaleString()} rows into database...`, 'info');
+          }
         }
       }
 
@@ -569,7 +593,8 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         insertMany(rowsBatch);
       }
     } else {
-      const workbook = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+      // Excel (.xlsx, .xls)
+      const workbook = XLSX.readFile(uploadedFilePath, { cellDates: true, dense: true });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
       const allRows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
@@ -578,13 +603,17 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         return res.status(400).json({ error: 'Uploaded sheet contains no data rows.' });
       }
 
-      columns = Object.keys(allRows[0]).map(c => c.trim());
+      columns = Object.keys(allRows[0]).map(c => c.replace(/^\uFEFF/, '').trim());
       totalCount = allRows.length;
 
       for (let i = 0; i < allRows.length; i += 5000) {
         const chunk = allRows.slice(i, i + 5000);
         insertMany(chunk);
       }
+    }
+
+    if (totalCount === 0) {
+      return res.status(400).json({ error: 'File was parsed but 0 valid data rows were found. Please check column format.' });
     }
 
     const defaultMap = getStoredMapping();
@@ -612,7 +641,14 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       mapping: autoMapping
     });
   } catch (err) {
-    return res.status(500).json({ error: `Upload error: ${err.message}` });
+    console.error('Upload Error:', err);
+    addLog(`❌ Upload Processing Error: ${err.message}`, 'error');
+    return res.status(500).json({ error: `Server failed to process file: ${err.message}` });
+  } finally {
+    // Delete temporary upload file from disk to avoid disk space bloat
+    if (uploadedFilePath && fs.existsSync(uploadedFilePath)) {
+      try { fs.unlinkSync(uploadedFilePath); } catch (e) {}
+    }
   }
 });
 
@@ -854,11 +890,27 @@ app.get('/api/export', (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`=======================================================`);
-  console.log(`🚀 Google Form Humanistic Background Automation Server`);
-  console.log(`🌐 Running on http://localhost:${PORT}`);
-  console.log(`⏳ Strictly < 20 votes/minute natural humanistic pacing`);
-  console.log(`⏱️ Live Minute Countdown Timers & Cycle Trackers Active`);
-  console.log(`=======================================================`);
+// Global Error Handler (Handles Multer errors, file size limit errors, etc.)
+app.use((err, req, res, next) => {
+  console.error('Express Error:', err);
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: 'File too large for server upload limit.' });
+    }
+    return res.status(400).json({ error: `Upload error (${err.code}): ${err.message}` });
+  } else if (err) {
+    return res.status(500).json({ error: err.message || 'Internal server error during upload.' });
+  }
+  next();
+});
+
+// Server binding on 0.0.0.0 for Linux servers & PM2
+app.listen(PORT, '0.0.0.0', () => {
+  console.log('=======================================================');
+  console.log('🚀 Google Form Automation Server Started (PM2 / Linux Ready)');
+  console.log(`🌐 Local URL: http://localhost:${PORT}`);
+  console.log(`🌐 Network binding: 0.0.0.0:${PORT}`);
+  console.log(`💾 Database: ${dbPath}`);
+  console.log(`📁 Uploads Temp Dir: ${UPLOADS_DIR}`);
+  console.log('=======================================================');
 });
