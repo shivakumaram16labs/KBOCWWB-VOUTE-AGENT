@@ -64,6 +64,8 @@ const cookiesInput = document.getElementById('cookiesInput');
 const minPerMinute = document.getElementById('minPerMinute');
 const maxPerMinute = document.getElementById('maxPerMinute');
 const nightPauseToggle = document.getElementById('nightPauseToggle');
+const btnSaveConfig = document.getElementById('btnSaveConfig');
+const configSavedBadge = document.getElementById('configSavedBadge');
 const mappingList = document.getElementById('mappingList');
 
 const btnTestSingle = document.getElementById('btnTestSingle');
@@ -309,6 +311,52 @@ btnDaemonResume.addEventListener('click', async () => {
     console.error(err);
   }
 });
+
+// Live Configuration Save (Works even while background job is running)
+async function saveLiveConfig(silent = false) {
+  const config = {
+    formUrl: formUrlInput.value.trim(),
+    minPerMinute: Math.max(1, Math.min(18, parseInt(minPerMinute.value) || 8)),
+    maxPerMinute: Math.max(2, Math.min(19, parseInt(maxPerMinute.value) || 16)),
+    nightPauseEnabled: Boolean(nightPauseToggle.checked),
+    cookies: cookiesInput.value.trim()
+  };
+
+  try {
+    const res = await fetch(getApiUrl('api/config'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config, mapping: appState.mapping })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+
+    if (configSavedBadge) {
+      configSavedBadge.classList.remove('hidden');
+      configSavedBadge.innerHTML = `<i class="fa-solid fa-check"></i> ${config.nightPauseEnabled ? 'Night Pause ON' : 'Night Pause OFF (24/7)'}`;
+      setTimeout(() => {
+        configSavedBadge.classList.add('hidden');
+      }, 3500);
+    }
+    if (!silent) {
+      addLogToUI(`⚙️ Configuration saved live: Auto Night Pause is now ${config.nightPauseEnabled ? 'ENABLED (11 PM–7 AM)' : 'DISABLED (Runs 24/7)'}.`, 'info');
+    }
+  } catch (err) {
+    alert(`Failed to save configuration: ${err.message}`);
+  }
+}
+
+// Save immediately when nightPauseToggle is flipped
+nightPauseToggle.addEventListener('change', () => {
+  saveLiveConfig(false);
+});
+
+// Save button click
+if (btnSaveConfig) {
+  btnSaveConfig.addEventListener('click', () => {
+    saveLiveConfig(false);
+  });
+}
 
 // Single Row Test
 btnTestSingle.addEventListener('click', async () => {
@@ -587,7 +635,7 @@ async function syncServerState() {
       if (data.config.formUrl) formUrlInput.value = data.config.formUrl;
       if (data.config.minPerMinute) minPerMinute.value = data.config.minPerMinute;
       if (data.config.maxPerMinute) maxPerMinute.value = data.config.maxPerMinute;
-      if (data.config.nightPauseEnabled) nightPauseToggle.checked = data.config.nightPauseEnabled;
+      nightPauseToggle.checked = Boolean(data.config.nightPauseEnabled);
       if (data.config.cookies) cookiesInput.value = data.config.cookies;
     }
 
@@ -610,6 +658,17 @@ function initSSE() {
   eventSource.addEventListener('log', (e) => {
     const logItem = JSON.parse(e.data);
     addLogToUI(logItem.message, logItem.type, logItem.timestamp);
+  });
+
+  eventSource.addEventListener('config_updated', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.config) {
+        nightPauseToggle.checked = Boolean(data.config.nightPauseEnabled);
+        if (data.config.minPerMinute) minPerMinute.value = data.config.minPerMinute;
+        if (data.config.maxPerMinute) maxPerMinute.value = data.config.maxPerMinute;
+      }
+    } catch (err) {}
   });
 
   eventSource.addEventListener('cycle_tick', (e) => {

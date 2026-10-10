@@ -748,6 +748,30 @@ app.post('/api/resume', (req, res) => {
   return res.json({ success: true, message: 'Automation resumed', status: 'RUNNING' });
 });
 
+// 6.5. Live Configuration Update (Applies instantly to running job)
+app.post('/api/config', (req, res) => {
+  const { config, mapping } = req.body || {};
+  let currentConfig = getStoredConfig();
+
+  if (config) {
+    currentConfig = { ...currentConfig, ...config };
+    saveStoredConfig(currentConfig);
+  }
+  if (mapping) {
+    saveStoredMapping(mapping);
+  }
+
+  const nightStateStr = currentConfig.nightPauseEnabled ? 'ENABLED (11 PM – 7 AM)' : 'DISABLED (24/7 Continuous)';
+  addLog(`⚙️ Configuration updated live: Auto Night Pause is now ${nightStateStr}. Pacing: ${currentConfig.minPerMinute}–${currentConfig.maxPerMinute} votes/min.`, 'info');
+
+  broadcast('config_updated', {
+    config: currentConfig,
+    mapping: mapping || getStoredMapping()
+  });
+
+  return res.json({ success: true, message: 'Configuration saved and applied live.', config: currentConfig });
+});
+
 // 7. Clear All
 app.post('/api/clear-all', (req, res) => {
   setEngineState('IDLE');

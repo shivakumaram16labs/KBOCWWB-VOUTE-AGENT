@@ -212,9 +212,19 @@
                 </label>
                 <div>
                   <strong>Auto Night Pause (11 PM – 7 AM)</strong>
-                  <p class="field-hint">Automatically pauses work at night and resumes automatically in morning</p>
+                  <p class="field-hint">Toggle OFF for continuous 24/7 non-stop running. Changes save instantly to running jobs.</p>
                 </div>
               </div>
+            </div>
+
+            <!-- Save Settings Button -->
+            <div style="margin-top: 14px; display: flex; align-items: center; justify-content: space-between;">
+              <button class="btn btn-secondary btn-sm" id="btnSaveConfig" type="button">
+                <i class="fa-solid fa-floppy-disk"></i> Save Settings Live
+              </button>
+              <span id="configSavedBadge" class="badge-success hidden" style="font-size: 0.75rem; padding: 4px 8px; border-radius: 4px; color: var(--color-success); background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3);">
+                <i class="fa-solid fa-check"></i> Saved Live
+              </span>
             </div>
           </div>
         </div>
